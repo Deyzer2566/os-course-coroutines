@@ -1,0 +1,126 @@
+#include "coroutines.hpp"
+#include "coroutines_config.h"
+#include <setjmp.h>
+#include <list>
+#include <functional>
+#include <chrono>
+#include <memory>
+#include <queue>
+#include <iostream>
+#include <bitset>
+#include <tuple>
+
+struct context {
+    jmp_buf buf;
+};
+
+struct coroutine {
+    struct context context;
+    struct {
+        std::chrono::microseconds running;
+        std::chrono::microseconds runnable;
+        std::chrono::microseconds blocked;
+    } time;
+    enum {
+        RUNNING=2,
+        RUNNABLE,
+        BLOCKED,
+        ZOMBIE
+    } state;
+};
+
+std::list<struct coroutine> coroutines;
+std::list<struct coroutine>::iterator current_coroutine;
+std::queue<std::tuple<std::function<int(int)>, int>> coroutines_queue;
+struct context dispatcher_context;
+std::bitset<MAX_POOL_SIZE> used_stacks;
+
+void coroutines_dispatcher();
+bool can_pop_queue();
+void update_coroutines_times(std::chrono::microseconds duration);
+
+void await(std::function<int(int)> func, int param) {
+    // current_coroutine->state = coroutine::BLOCKED;
+    func(param);
+}
+void coroutine_wrapper(std::function<int(int)> func, int param, const int stacknum) {
+    char stack[(stacknum+1)*COROUTINE_STACK_SIZE];
+    if(setjmp(dispatcher_context.buf) == 0) {
+        func(param);
+        current_coroutine->state = coroutine::ZOMBIE;
+        used_stacks.reset(stacknum);
+        longjmp(dispatcher_context.buf, 1);
+    }
+}
+void yield() {
+    if(setjmp(current_coroutine->context.buf) == 0) {
+        longjmp(dispatcher_context.buf, 1);
+    }
+}
+void update_coroutines_times(std::chrono::microseconds duration) {
+    for(std::list<coroutine>::iterator it = coroutines.begin(); it != coroutines.end(); it++) {
+        switch(it->state) {
+            case coroutine::BLOCKED:
+                it->time.blocked += duration;
+                break;
+            case coroutine::RUNNABLE:
+                it->time.runnable += duration;
+                break;
+            case coroutine::RUNNING:
+            case coroutine::ZOMBIE:
+                it->time.running += duration;
+                break;
+        }
+    }
+}
+void coroutines_dispatcher() {
+    while(true) {
+        while(!coroutines_queue.empty() && can_pop_queue()) {
+            std::tuple<std::function<int(int)>, int> coroutine_start = coroutines_queue.front();
+            coroutines_queue.pop();
+            coroutines.emplace_back();
+            current_coroutine = std::prev(coroutines.end());
+            current_coroutine->state = coroutine::RUNNING;
+            int stacknum;
+            for(stacknum = 0;stacknum<MAX_POOL_SIZE;stacknum++)
+                if(!used_stacks[stacknum])
+                    break;
+            used_stacks.set(stacknum);
+            coroutine_wrapper(std::get<0>(coroutine_start), std::get<1>(coroutine_start), stacknum);
+            if(current_coroutine->state == coroutine::RUNNING)
+                current_coroutine->state = coroutine::RUNNABLE;
+        }
+        for (current_coroutine = coroutines.begin(); current_coroutine != coroutines.end();) {
+            if(current_coroutine->state == coroutine::RUNNABLE) {
+                std::chrono::system_clock::time_point start = std::chrono::high_resolution_clock::now();
+                if(setjmp(dispatcher_context.buf) == 0) {
+                    current_coroutine->state = coroutine::RUNNING;
+                    longjmp(current_coroutine->context.buf, 1);
+                }
+                std::chrono::system_clock::time_point end = std::chrono::high_resolution_clock::now();
+                update_coroutines_times(std::chrono::duration_cast<std::chrono::microseconds>(end-start));
+                if(current_coroutine->state == coroutine::RUNNING)
+                    current_coroutine->state = coroutine::RUNNABLE;
+            }
+            if(current_coroutine->state == coroutine::ZOMBIE) {
+                std::cout<<"Корутина завершила работу"<<std::endl;
+                std::cout<<"Время running: "<<current_coroutine->time.running.count()<<" микросекунд"<<std::endl;
+                std::cout<<"Время runnable: "<<current_coroutine->time.runnable.count()<<" микросекунд"<<std::endl;
+                std::cout<<"Время blocked: "<<current_coroutine->time.blocked.count()<<" микросекунд"<<std::endl;
+                current_coroutine = coroutines.erase(current_coroutine);
+            }
+            else
+                current_coroutine = std::next(current_coroutine);
+        }
+        if(coroutines_queue.empty() && coroutines.empty())
+            return;
+    }
+}
+
+void new_coroutine(std::function<int(int)> func, int param) {
+    coroutines_queue.push(std::make_tuple(func, param));
+}
+
+bool can_pop_queue() {
+    return coroutines.size() < MAX_POOL_SIZE;
+}
