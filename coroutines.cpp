@@ -1,4 +1,5 @@
 #include "coroutines.hpp"
+#include "coroutines_api.hpp"
 #include "coroutines_config.h"
 #include <setjmp.h>
 #include <list>
@@ -9,6 +10,9 @@
 #include <iostream>
 #include <bitset>
 #include <tuple>
+#include <cstdio>
+#include <unistd.h>
+#include <fcntl.h>
 
 extern "C" {
 extern void coroutine_wrapper(std::function<int(int)> func, int param, const int stacknum);
@@ -128,10 +132,11 @@ void coroutines_dispatcher() {
                 current_coroutine->state = coroutine::RUNNABLE;
         }
         for (current_coroutine = coroutines.begin(); current_coroutine != coroutines.end();) {
-            if(current_coroutine->state == coroutine::RUNNABLE) {
+            if(current_coroutine->state == coroutine::RUNNABLE || current_coroutine->state == coroutine::BLOCKED) {
                 std::chrono::system_clock::time_point start = std::chrono::high_resolution_clock::now();
                 if(setjmp(dispatcher_context.buf) == 0) {
-                    current_coroutine->state = coroutine::RUNNING;
+                    if(current_coroutine->state == coroutine::RUNNABLE)
+                        current_coroutine->state = coroutine::RUNNING;
                     longjmp(current_coroutine->context.buf, 1);
                 }
                 std::chrono::system_clock::time_point end = std::chrono::high_resolution_clock::now();
@@ -161,4 +166,21 @@ void new_coroutine(std::function<int(int)> func, int param) {
 
 bool can_pop_queue() {
     return coroutines.size() < MAX_POOL_SIZE;
+}
+
+void coroutine_printf(int fd, const char* format, ...) {
+    char buffer[1024];
+    va_list args;
+    va_start(args, format);
+    int len = vsprintf(buffer, format, args);
+    va_end(args);  
+    current_coroutine->state = coroutine::BLOCKED;
+    fcntl(fd, F_SETFL, fcntl(fd, F_GETFL) | O_NONBLOCK);
+    char* pointer = buffer;
+    while(pointer < buffer + len) {
+        pointer += write(fd, buffer, len - (pointer - buffer));
+        yield();
+    }
+    fcntl(fd, F_SETFL, fcntl(fd, F_GETFL) & (~O_NONBLOCK));
+    current_coroutine->state = coroutine::RUNNING;
 }

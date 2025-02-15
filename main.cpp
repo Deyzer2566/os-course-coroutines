@@ -1,15 +1,24 @@
 #include <iostream>
 #include "coroutines.hpp"
+#include "coroutines_api.hpp"
 using namespace std;
 int lol(int a) {
-    for(int i = 0;i<a;i++) {
-        cout<<"coroutine task: "<<i<<endl;
-        yield();
+    std::vector<int> multipliers;
+    int b = a;
+    for(int i = 2;i<a;) {
+        if(b % i == 0) {
+            multipliers.push_back(i);
+            b/=i;
+        } else i++;
     }
+    coroutine_printf(1, "Множители числа %d:", a);
+    for(int i = 0;i<multipliers.size();i++)
+        coroutine_printf(1, "%d ", multipliers[i]);
+    coroutine_printf(1, "\n");
     return a+1;
 }
 int main() {
-    for(int i = 0;i<15;i++)
-        new_coroutine(static_cast<std::function<int(int)>>(lol), 15);
+    for(int i = 15;i<30;i++)
+        new_coroutine(static_cast<std::function<int(int)>>(lol), i);
     coroutines_dispatcher();
 }
