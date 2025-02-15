@@ -2,19 +2,14 @@
 #include "coroutines.hpp"
 using namespace std;
 int lol(int a) {
-    cout<<"a"<<endl;
-    yield();
-    cout<<"a"<<endl;
+    for(int i = 0;i<a;i++) {
+        cout<<"coroutine task: "<<i<<endl;
+        yield();
+    }
     return a+1;
 }
-int lol1(int a) {
-    cout<<"b"<<endl;
-    yield();
-    cout<<"b"<<endl;
-    return a+2;
-}
 int main() {
-    new_coroutine(static_cast<std::function<int(int)>>(lol), 0);
-    new_coroutine(static_cast<std::function<int(int)>>(lol1), 1);
+    for(int i = 0;i<15;i++)
+        new_coroutine(static_cast<std::function<int(int)>>(lol), 15);
     coroutines_dispatcher();
 }
