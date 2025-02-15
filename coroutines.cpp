@@ -131,29 +131,31 @@ void coroutines_dispatcher() {
             if(current_coroutine->state == coroutine::RUNNING)
                 current_coroutine->state = coroutine::RUNNABLE;
         }
-        for (current_coroutine = coroutines.begin(); current_coroutine != coroutines.end();) {
-            if(current_coroutine->state == coroutine::RUNNABLE || current_coroutine->state == coroutine::BLOCKED) {
-                std::chrono::system_clock::time_point start = std::chrono::high_resolution_clock::now();
-                if(setjmp(dispatcher_context.buf) == 0) {
-                    if(current_coroutine->state == coroutine::RUNNABLE)
-                        current_coroutine->state = coroutine::RUNNING;
-                    longjmp(current_coroutine->context.buf, 1);
-                }
-                std::chrono::system_clock::time_point end = std::chrono::high_resolution_clock::now();
-                update_coroutines_times(std::chrono::duration_cast<std::chrono::microseconds>(end-start));
-                if(current_coroutine->state == coroutine::RUNNING)
-                    current_coroutine->state = coroutine::RUNNABLE;
+        /* Ищем корутину с наименьшим временем исполнения */
+        current_coroutine = std::min(coroutines.begin(), coroutines.end(), [](auto a, auto b){return a->state != coroutine::ZOMBIE && a->time.running.count() < b->time.running.count();});
+        /* Исполняем */
+        if(current_coroutine->state == coroutine::RUNNABLE || current_coroutine->state == coroutine::BLOCKED) {
+            std::chrono::system_clock::time_point start = std::chrono::high_resolution_clock::now();
+            if(setjmp(dispatcher_context.buf) == 0) {
+                if(current_coroutine->state == coroutine::RUNNABLE)
+                    current_coroutine->state = coroutine::RUNNING;
+                longjmp(current_coroutine->context.buf, 1);
             }
-            if(current_coroutine->state == coroutine::ZOMBIE) {
-                // std::cout<<"Корутина завершила работу"<<std::endl;
-                // std::cout<<"Время running: "<<current_coroutine->time.running.count()<<" микросекунд"<<std::endl;
-                // std::cout<<"Время runnable: "<<current_coroutine->time.runnable.count()<<" микросекунд"<<std::endl;
-                // std::cout<<"Время blocked: "<<current_coroutine->time.blocked.count()<<" микросекунд"<<std::endl;
-                current_coroutine = coroutines.erase(current_coroutine);
-            }
-            else
-                current_coroutine = std::next(current_coroutine);
+            std::chrono::system_clock::time_point end = std::chrono::high_resolution_clock::now();
+            update_coroutines_times(std::chrono::duration_cast<std::chrono::microseconds>(end-start));
+            if(current_coroutine->state == coroutine::RUNNING)
+                current_coroutine->state = coroutine::RUNNABLE;
         }
+        if(current_coroutine->state == coroutine::ZOMBIE) {
+            // std::cout<<"Корутина завершила работу"<<std::endl;
+            // std::cout<<"Время running: "<<current_coroutine->time.running.count()<<" микросекунд"<<std::endl;
+            // std::cout<<"Время runnable: "<<current_coroutine->time.runnable.count()<<" микросекунд"<<std::endl;
+            // std::cout<<"Время blocked: "<<current_coroutine->time.blocked.count()<<" микросекунд"<<std::endl;
+            current_coroutine = coroutines.erase(current_coroutine);
+        }
+        else
+            current_coroutine = std::next(current_coroutine);
+        // }
         // print_statistic();
         if(coroutines_queue.empty() && coroutines.empty())
             return;
