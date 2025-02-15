@@ -174,11 +174,33 @@ void coroutine_printf(int fd, const char* format, ...) {
     va_start(args, format);
     int len = vsprintf(buffer, format, args);
     va_end(args);  
+    coroutine_write(fd, buffer, len);
+}
+
+void coroutine_write(int fd, void* buffer, size_t len) {
     current_coroutine->state = coroutine::BLOCKED;
     fcntl(fd, F_SETFL, fcntl(fd, F_GETFL) | O_NONBLOCK);
-    char* pointer = buffer;
-    while(pointer < buffer + len) {
-        pointer += write(fd, buffer, len - (pointer - buffer));
+    char* pointer = (char*)buffer;
+    while(pointer < (char*)buffer + len) {
+        ssize_t w = write(fd, pointer, len - (pointer - (char*)buffer));
+        if(w != -1)
+            pointer += w;
+        yield();
+    }
+    fcntl(fd, F_SETFL, fcntl(fd, F_GETFL) & (~O_NONBLOCK));
+    current_coroutine->state = coroutine::RUNNING;
+}
+
+void coroutine_read(int fd, void* buffer, size_t len) {
+    current_coroutine->state = coroutine::BLOCKED;
+    fcntl(fd, F_SETFL, fcntl(fd, F_GETFL) | O_NONBLOCK);
+    char* pointer = (char*)buffer;
+    while(pointer < (char*)buffer + len) {
+        ssize_t r = read(fd, pointer, len - (pointer - (char*)buffer));
+        if(r != -1)
+            pointer += r;
+        if(r == 0)
+            break;
         yield();
     }
     fcntl(fd, F_SETFL, fcntl(fd, F_GETFL) & (~O_NONBLOCK));
