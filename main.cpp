@@ -2,14 +2,18 @@
 #include "coroutines.hpp"
 #include "coroutines_api.hpp"
 using namespace std;
+int nothing(int a) {
+    return a;
+}
 int lol(int a) {
     std::vector<int> multipliers;
     int b = a;
-    for(int i = 2;i<a;) {
+    Generator<int, int> nums = yield(static_cast<std::function<int(int)>>([](int a){return a;}), 2, a, 1);
+    for(int i = nums.start();!nums.isEnd();) {
         if(b % i == 0) {
             multipliers.push_back(i);
             b/=i;
-        } else i++;
+        } else i = nums.next();
     }
     coroutine_printf(1, "Множители числа %d:", a);
     for(int i = 0;i<multipliers.size();i++)

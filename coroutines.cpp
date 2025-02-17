@@ -46,6 +46,7 @@ uint64_t completed_coroutins = 0;
 void coroutines_dispatcher();
 bool can_pop_queue();
 void update_coroutines_times(std::chrono::microseconds duration);
+void wait();
 
 void await(std::function<int(int)> func, int param) {
     // current_coroutine->state = coroutine::BLOCKED;
@@ -61,7 +62,7 @@ void coroutine_wrapper_(std::function<int(int)> func, int param, const int stack
     }
 }
 }
-void yield() {
+void wait() {
     if(setjmp(current_coroutine->context.buf) == 0) {
         longjmp(dispatcher_context.buf, 1);
     }
@@ -132,7 +133,7 @@ void coroutines_dispatcher() {
                 current_coroutine->state = coroutine::RUNNABLE;
         }
         /* Ищем корутину с наименьшим временем исполнения */
-        current_coroutine = std::min(coroutines.begin(), coroutines.end(), [](auto a, auto b){return a->state != coroutine::ZOMBIE && a->time.running.count() < b->time.running.count();});
+        current_coroutine = std::min_element(coroutines.begin(), coroutines.end(), [](auto a, auto b){return a.time.running.count() < b.time.running.count();});
         /* Исполняем */
         if(current_coroutine->state == coroutine::RUNNABLE || current_coroutine->state == coroutine::BLOCKED) {
             std::chrono::system_clock::time_point start = std::chrono::high_resolution_clock::now();
@@ -155,7 +156,6 @@ void coroutines_dispatcher() {
         }
         else
             current_coroutine = std::next(current_coroutine);
-        // }
         // print_statistic();
         if(coroutines_queue.empty() && coroutines.empty())
             return;
@@ -187,7 +187,7 @@ void coroutine_write(int fd, void* buffer, size_t len) {
         ssize_t w = write(fd, pointer, len - (pointer - (char*)buffer));
         if(w != -1)
             pointer += w;
-        yield();
+        wait();
     }
     fcntl(fd, F_SETFL, fcntl(fd, F_GETFL) & (~O_NONBLOCK));
     current_coroutine->state = coroutine::RUNNING;
@@ -203,7 +203,7 @@ void coroutine_read(int fd, void* buffer, size_t len) {
             pointer += r;
         if(r == 0)
             break;
-        yield();
+        wait();
     }
     fcntl(fd, F_SETFL, fcntl(fd, F_GETFL) & (~O_NONBLOCK));
     current_coroutine->state = coroutine::RUNNING;
