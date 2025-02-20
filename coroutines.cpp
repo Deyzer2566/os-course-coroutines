@@ -129,49 +129,60 @@ void print_statistic() {
   std::cout << "Количество завершенных корутин: " << completed_coroutines << '\n';
 }
 
-void coroutines_dispatcher() {
-  for (;;) {
-    while (!coroutines_queue.empty() && can_pop_queue()) {
-      coroutine_queue_element const coroutine_start(std::move(coroutines_queue.front()));
-      coroutines_queue.pop();
-      coroutines.emplace_back();
-      current_coroutine = std::prev(coroutines.end());
-      current_coroutine->state = coroutine::RUNNING;
-      int stacknum = 0;
-      for (stacknum = 0; stacknum < MAX_POOL_SIZE; stacknum++) {
-        if (!used_stacks[stacknum]) {
-          break;
-        }
-      }
-      used_stacks.set(stacknum);
-      auto start = std::chrono::high_resolution_clock::now();
-      coroutine_wrapper(coroutine_start.function, coroutine_start.parameter, stacknum);
-      auto end = std::chrono::high_resolution_clock::now();
-      update_coroutines_times(std::chrono::duration_cast<std::chrono::microseconds>(end - start));
-      if (current_coroutine->state == coroutine::RUNNING) {
-        current_coroutine->state = coroutine::RUNNABLE;
+void pop_queue_if_can() {
+  while (!coroutines_queue.empty() && can_pop_queue()) {
+    coroutine_queue_element const coroutine_start(std::move(coroutines_queue.front()));
+    coroutines_queue.pop();
+    coroutines.emplace_back();
+    current_coroutine = std::prev(coroutines.end());
+    current_coroutine->state = coroutine::RUNNING;
+    int stacknum = 0;
+    for (stacknum = 0; stacknum < MAX_POOL_SIZE; stacknum++) {
+      if (!used_stacks[stacknum]) {
+        break;
       }
     }
+    used_stacks.set(stacknum);
+    auto start = std::chrono::high_resolution_clock::now();
+    coroutine_wrapper(coroutine_start.function, coroutine_start.parameter, stacknum);
+    auto end = std::chrono::high_resolution_clock::now();
+    update_coroutines_times(std::chrono::duration_cast<std::chrono::microseconds>(end - start));
+    if (current_coroutine->state == coroutine::RUNNING) {
+      current_coroutine->state = coroutine::RUNNABLE;
+    }
+  }
+}
+
+/*
+  Исполняет корутину current_coroutine
+*/
+void execute_coroutine() {
+  if (current_coroutine->state == coroutine::RUNNABLE ||
+      current_coroutine->state == coroutine::BLOCKED) {
+    auto start = std::chrono::high_resolution_clock::now();
+    if (setjmp(dispatcher_context.buf) == 0) {
+      if (current_coroutine->state == coroutine::RUNNABLE) {
+        current_coroutine->state = coroutine::RUNNING;
+      }
+      longjmp(current_coroutine->context.buf, 1);
+    }
+    auto end = std::chrono::high_resolution_clock::now();
+    update_coroutines_times(std::chrono::duration_cast<std::chrono::microseconds>(end - start));
+    if (current_coroutine->state == coroutine::RUNNING) {
+      current_coroutine->state = coroutine::RUNNABLE;
+    }
+  }
+}
+
+void coroutines_dispatcher() {
+  for (;;) {
+    pop_queue_if_can();
     /* Ищем корутину с наименьшим временем исполнения */
     current_coroutine = std::min_element(coroutines.begin(), coroutines.end(), [](auto a, auto b) {
       return a.time.running.count() < b.time.running.count();
     });
     /* Исполняем */
-    if (current_coroutine->state == coroutine::RUNNABLE ||
-        current_coroutine->state == coroutine::BLOCKED) {
-      auto start = std::chrono::high_resolution_clock::now();
-      if (setjmp(dispatcher_context.buf) == 0) {
-        if (current_coroutine->state == coroutine::RUNNABLE) {
-          current_coroutine->state = coroutine::RUNNING;
-        }
-        longjmp(current_coroutine->context.buf, 1);
-      }
-      auto end = std::chrono::high_resolution_clock::now();
-      update_coroutines_times(std::chrono::duration_cast<std::chrono::microseconds>(end - start));
-      if (current_coroutine->state == coroutine::RUNNING) {
-        current_coroutine->state = coroutine::RUNNABLE;
-      }
-    }
+    execute_coroutine();
     if (current_coroutine->state == coroutine::ZOMBIE) {
       current_coroutine = coroutines.erase(current_coroutine);
     } else {
