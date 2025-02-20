@@ -30,7 +30,7 @@ struct coroutine {
     std::chrono::microseconds runnable;
     std::chrono::microseconds blocked;
   } time;
-  enum State { RUNNING = 2, RUNNABLE, BLOCKED, ZOMBIE } state;
+  enum State { RUNNING, RUNNABLE, BLOCKED, ZOMBIE } state;
   auto getTimeAccumulator() -> std::chrono::microseconds* {
     switch (state) {
       case coroutine::BLOCKED:
@@ -63,10 +63,6 @@ uint64_t completed_coroutines = 0;
 
 auto can_pop_queue() -> bool;
 void update_coroutines_times(std::chrono::microseconds duration);
-
-void await(const std::function<int(int)>& func, int param) {
-  func(param);
-}
 
 extern "C" {
 void coroutine_wrapper_(const std::function<int(int)>& func, int param, const int stacknum) {
